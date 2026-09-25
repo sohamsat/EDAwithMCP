@@ -1,0 +1,68 @@
+---
+# Lab playbook: back up httpd.conf, inject a syntax error, restart httpd.
+# Target the Satellite host. Inventory group name: satellite
+- name: Break Satellite httpd with a bad httpd.conf
+  hosts: satellite
+  become: true
+  gather_facts: true
+
+  vars:
+    httpd_conf: /etc/httpd/conf/httpd.conf
+    httpd_backup: "/etc/httpd/conf/httpd.conf.{{ ansible_date_time.date }}"
+
+  tasks:
+    - name: Confirm httpd.conf exists
+      ansible.builtin.stat:
+        path: "{{ httpd_conf }}"
+      register: httpd_conf_stat
+
+    - name: Fail when httpd.conf is missing
+      ansible.builtin.fail:
+        msg: "{{ httpd_conf }} does not exist on {{ inventory_hostname }}"
+      when: not httpd_conf_stat.stat.exists
+
+    - name: Back up httpd.conf with a date extension
+      ansible.builtin.copy:
+        src: "{{ httpd_conf }}"
+        dest: "{{ httpd_backup }}"
+        remote_src: true
+        mode: preserve
+      register: httpd_backup_result
+
+    - name: Insert an invalid directive into httpd.conf
+      ansible.builtin.blockinfile:
+        path: "{{ httpd_conf }}"
+        marker: "# {mark} AAP-LAB-HTTPD-FAULT"
+        block: |
+          # Intentional lab fault. httpd -t fails on the next line.
+          InvalidDirectiveThisBreaksHttpd
+        insertafter: EOF
+
+    - name: Restart httpd so the bad config is loaded
+      ansible.builtin.systemd:
+        name: httpd
+        state: restarted
+      register: httpd_restart
+      failed_when: false
+
+    - name: Check whether httpd is active
+      ansible.builtin.command: systemctl is-active httpd
+      register: httpd_active
+      changed_when: false
+      failed_when: false
+
+    - name: Run httpd config test
+      ansible.builtin.command: httpd -t
+      register: httpd_configtest
+      changed_when: false
+      failed_when: false
+
+    - name: Report backup path and service result
+      ansible.builtin.debug:
+        msg:
+          - "Backup: {{ httpd_backup }}"
+          - "Backup changed: {{ httpd_backup_result.changed }}"
+          - "Restart rc: {{ httpd_restart.rc | default('n/a') }}"
+          - "httpd is-active: {{ httpd_active.stdout }}"
+          - "httpd -t rc: {{ httpd_configtest.rc }}"
+          - "{{ httpd_configtest.stderr | default(httpd_configtest.stdout) }}"
