@@ -1,0 +1,22 @@
+---
+# Poll Satellite. Launch diagnose only when the connection fails.
+# A redirect or login page is not treated as an outage.
+- name: Satellite httpd health
+  hosts: all
+  sources:
+    - ansible.eda.url_check:
+        urls:
+          - https://smajumda-rhsat.syslab.pnq2.redhat.com/
+        delay: 30
+        verify_ssl: false
+  rules:
+    - name: Satellite httpd is unreachable
+      condition: event.url_check.error_msg is defined
+      throttle:
+        once_within: 5 minutes
+        group_by_attributes:
+          - event.url_check.url
+      action:
+        run_job_template:
+          name: satellite-httpd-diagnose
+          organization: Default
