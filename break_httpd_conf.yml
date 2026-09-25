@@ -1,8 +1,8 @@
 ---
 # Lab playbook: back up httpd.conf, inject a syntax error, restart httpd.
-# Target the Satellite host. Inventory group name: satellite
+# Runs against every host in the job template inventory.
 - name: Break Satellite httpd with a bad httpd.conf
-  hosts: satellite
+  hosts: all
   become: true
   gather_facts: true
 
