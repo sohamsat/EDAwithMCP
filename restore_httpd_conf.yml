@@ -1,0 +1,51 @@
+---
+# Restore httpd.conf from the newest dated backup, then start httpd.
+# httpd starts only when httpd -t succeeds.
+- name: Restore Satellite httpd.conf and start httpd
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Find dated httpd.conf backups
+      ansible.builtin.find:
+        paths: /etc/httpd/conf
+        patterns: "httpd.conf.[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
+        file_type: file
+      register: httpd_backups
+
+    - name: Fail when no backup exists
+      ansible.builtin.fail:
+        msg: "No /etc/httpd/conf/httpd.conf.YYYY-MM-DD backup found"
+      when: httpd_backups.matched == 0
+
+    - name: Select the newest backup
+      ansible.builtin.set_fact:
+        httpd_backup: "{{ (httpd_backups.files | sort(attribute='mtime') | last).path }}"
+
+    - name: Restore httpd.conf from the backup
+      ansible.builtin.copy:
+        src: "{{ httpd_backup }}"
+        dest: /etc/httpd/conf/httpd.conf
+        remote_src: true
+        mode: preserve
+
+    - name: Run httpd config test
+      ansible.builtin.command: httpd -t
+      changed_when: false
+
+    - name: Start httpd
+      ansible.builtin.systemd:
+        name: httpd
+        state: started
+
+    - name: Confirm httpd is active
+      ansible.builtin.command: systemctl is-active httpd
+      register: httpd_active
+      changed_when: false
+
+    - name: Report restore result
+      ansible.builtin.debug:
+        msg:
+          - "Restored from: {{ httpd_backup }}"
+          - "httpd is-active: {{ httpd_active.stdout }}"
