@@ -75,6 +75,48 @@ Fire count went to 1. That is not an email or Slack message. The action launched
 
 Slack and email were not configured. Internal Red Hat Slack does not allow this user to install an app, and this lab has no SMTP relay for the AAP host.
 
+## Same example with an event stream
+
+This lab did not use an event stream. The activation **Event streams** field was left empty because `ansible.eda.url_check` polls Satellite from inside the rulebook.
+
+An event stream is a webhook on Event-Driven Ansible. Something else posts JSON when `httpd` is down. Event streams replace a webhook source in the activation. They do not replace `url_check`, so the rulebook source has to change:
+
+```yaml
+---
+- name: Satellite httpd health
+  hosts: all
+  sources:
+    - name: satellite_httpd
+      ansible.eda.webhook:
+        host: 0.0.0.0
+        port: 5000
+  rules:
+    - name: Satellite httpd is unreachable
+      condition: event.payload.status == "down"
+      throttle:
+        once_within: 5 minutes
+        group_by_attributes:
+          - event.payload.host
+      action:
+        run_job_template:
+          name: satellite-httpd-diagnose
+          organization: Default
+```
+
+Setup:
+
+1. **Automation Decisions → Event Streams**: create a stream and enable **Forward events to rulebook activation**. Copy the URL the UI shows.
+2. On **eda activation**, use the gear beside **Event streams**. Map rulebook source `satellite_httpd` to that event stream. The activation then receives events on the EDA webhook URL. It does not listen on port 5000 inside the decision-environment pod.
+3. When `httpd` is down, a sender that can see the service posts to that URL:
+
+```bash
+curl -k -H 'Content-Type: application/json' \
+  -d '{"host":"smajumda-rhsat.syslab.pnq2.redhat.com","service":"httpd","status":"down"}' \
+  https://<event-stream-url>
+```
+
+`event.payload.status == "down"` matches that body. The throttle still allows one diagnose job per host every 5 minutes. The event stream only receives the post. A cron on Satellite, or a manual `curl`, still has to decide that `httpd` failed.
+
 ## Restore with MCP
 
 The diagnose output is the decision point. The follow-up is the restore template, not a restart.
